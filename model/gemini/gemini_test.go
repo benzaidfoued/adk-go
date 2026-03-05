@@ -43,7 +43,7 @@ func TestModel_Generate(t *testing.T) {
 	}{
 		{
 			name:      "ok",
-			modelName: "gemini-2.0-flash",
+			modelName: "gemini-2.5-flash",
 			req: &model.LLMRequest{
 				Contents: genai.Text("What is the capital of France? One word."),
 				Config: &genai.GenerateContentConfig{
@@ -51,13 +51,14 @@ func TestModel_Generate(t *testing.T) {
 				},
 			},
 			want: &model.LLMResponse{
-				Content: genai.NewContentFromText("Paris\n", genai.RoleModel),
+				Content: genai.NewContentFromText("Paris", genai.RoleModel),
 				UsageMetadata: &genai.GenerateContentResponseUsageMetadata{
-					CandidatesTokenCount:    2,
-					CandidatesTokensDetails: []*genai.ModalityTokenCount{{Modality: "TEXT", TokenCount: 2}},
-					PromptTokenCount:        10,
-					PromptTokensDetails:     []*genai.ModalityTokenCount{{Modality: "TEXT", TokenCount: 10}},
-					TotalTokenCount:         12,
+					CandidatesTokenCount:    1,
+					CandidatesTokensDetails: nil,
+					PromptTokenCount:        11,
+					PromptTokensDetails:     []*genai.ModalityTokenCount{{Modality: "TEXT", TokenCount: 11}},
+					ThoughtsTokenCount:      34,
+					TotalTokenCount:         46,
 				},
 				FinishReason: "STOP",
 			},
@@ -95,14 +96,14 @@ func TestModel_GenerateStream(t *testing.T) {
 	}{
 		{
 			name:      "ok",
-			modelName: "gemini-2.0-flash",
+			modelName: "gemini-2.5-flash",
 			req: &model.LLMRequest{
 				Contents: genai.Text("What is the capital of France? One word."),
 				Config: &genai.GenerateContentConfig{
 					Temperature: new(float32),
 				},
 			},
-			want: "Paris\n",
+			want: "Paris",
 		},
 	}
 	for _, tt := range tests {
@@ -168,7 +169,7 @@ func TestModel_TrackingHeaders(t *testing.T) {
 			APIKey:     apiKey,
 		}
 
-		geminiModel, err := NewModel(t.Context(), "gemini-2.0-flash", cfg)
+		geminiModel, err := NewModel(t.Context(), "gemini-2.5-flash", cfg)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -186,6 +187,62 @@ func TestModel_TrackingHeaders(t *testing.T) {
 			t.Error("HTTP request was not intercepted; headers not verified")
 		}
 	})
+}
+
+func TestModel_RespectsRequestModel(t *testing.T) {
+	tests := []struct {
+		name            string
+		constructorName string
+		reqModel        string
+		wantInURL       string
+	}{
+		{
+			name:            "uses_constructor_name_when_req_model_empty",
+			constructorName: "gemini-2.5-flash",
+			reqModel:        "",
+			wantInURL:       "gemini-2.5-flash",
+		},
+		{
+			name:            "uses_req_model_when_set",
+			constructorName: "gemini-2.5-flash",
+			reqModel:        "gemini-2.0-flash",
+			wantInURL:       "gemini-2.0-flash",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var capturedURL string
+			interceptor := &headerInterceptor{
+				check: func(req *http.Request) {
+					capturedURL = req.URL.Path
+				},
+			}
+
+			cfg := &genai.ClientConfig{
+				HTTPClient: &http.Client{Transport: interceptor},
+				APIKey:     "fakekey",
+			}
+
+			geminiModel, err := NewModel(t.Context(), tt.constructorName, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			req := &model.LLMRequest{
+				Model:    tt.reqModel,
+				Contents: genai.Text("ping"),
+			}
+			for range geminiModel.GenerateContent(t.Context(), req, false) {
+			}
+
+			if capturedURL == "" {
+				t.Fatal("HTTP request was not intercepted")
+			}
+			if !strings.Contains(capturedURL, tt.wantInURL) {
+				t.Errorf("URL path = %q, want it to contain %q", capturedURL, tt.wantInURL)
+			}
+		})
+	}
 }
 
 // TextResponse holds the concatenated text from a response stream,
